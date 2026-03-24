@@ -916,33 +916,16 @@ function resolveSource(src, builtSignals) {
     return builtSignals[name].slice();
   }
 
-  // SMA:ETF:SPY:200 → SMA of source with window
-  if (prefix === 'SMA') {
+  // Inline source shorthands — all validate positive window to prevent look-ahead
+  if (prefix === 'SMA' || prefix === 'EMA' || prefix === 'RETURNS' || prefix === 'VOL') {
     const innerSrc = parts.slice(1, -1).join(':');
     const window = parseInt(parts[parts.length - 1]);
+    requirePositiveInt(window, 'window', prefix + ':' + src);
     const arr = resolveSource(innerSrc, builtSignals);
-    return applySMA(arr, window);
-  }
-
-  if (prefix === 'EMA') {
-    const innerSrc = parts.slice(1, -1).join(':');
-    const window = parseInt(parts[parts.length - 1]);
-    const arr = resolveSource(innerSrc, builtSignals);
-    return applyEMA(arr, window);
-  }
-
-  if (prefix === 'RETURNS') {
-    const innerSrc = parts.slice(1, -1).join(':');
-    const window = parseInt(parts[parts.length - 1]);
-    const arr = resolveSource(innerSrc, builtSignals);
-    return applyReturns(arr, window);
-  }
-
-  if (prefix === 'VOL') {
-    const innerSrc = parts.slice(1, -1).join(':');
-    const window = parseInt(parts[parts.length - 1]);
-    const arr = resolveSource(innerSrc, builtSignals);
-    return applyRollingVol(arr, window);
+    if (prefix === 'SMA') return applySMA(arr, window);
+    if (prefix === 'EMA') return applyEMA(arr, window);
+    if (prefix === 'RETURNS') return applyReturns(arr, window);
+    if (prefix === 'VOL') return applyRollingVol(arr, window);
   }
 
   throw new Error(`Unknown source prefix: "${prefix}" in "${src}"`);
@@ -1006,6 +989,16 @@ function applyRollingVol(arr, window) {
 }
 
 /**
+ * Validate that a parameter is a positive integer.
+ * Prevents look-ahead via negative windows/periods (e.g., lag(-5) would access future data).
+ */
+function requirePositiveInt(value, paramName, fnName) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new Error(`${fnName}: "${paramName}" must be a positive integer, got ${value}. Negative values would access future data.`);
+  }
+}
+
+/**
  * Apply a single transform step to an array.
  * @param {number[]} arr — input array aligned to DATES
  * @param {object} tf — transform definition {fn, ...params}
@@ -1015,6 +1008,12 @@ function applyRollingVol(arr, window) {
 function applyTransform(arr, tf, builtSignals) {
   const fn = tf.fn;
   const out = new Array(arr.length).fill(null);
+
+  // ── ANTI-LOOK-AHEAD VALIDATION ──
+  // All windowed/period transforms must have positive parameters.
+  // Negative values would reverse the direction and access future data.
+  if ('window' in tf) requirePositiveInt(tf.window, 'window', fn);
+  if ('periods' in tf) requirePositiveInt(tf.periods, 'periods', fn);
 
   switch (fn) {
     case 'returns': return applyReturns(arr, tf.window);
