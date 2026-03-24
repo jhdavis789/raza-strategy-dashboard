@@ -259,6 +259,10 @@ select{padding-right:20px}
       <select id="reg-transform"><option value="raw">Raw</option><option value="diff">Daily Chg</option><option value="zscore">Z-Score(252d)</option><option value="pctile">Pctile(252d)</option></select>
       <label>Lag</label>
       <select id="reg-lag"><option value="0">0d</option><option value="1">1d</option><option value="5">5d</option><option value="22">22d</option></select>
+      <label>From</label>
+      <input type="date" id="reg-start" style="width:130px">
+      <label>To</label>
+      <input type="date" id="reg-end" style="width:130px">
       <button class="btn" id="run-reg-btn">Run Regression</button>
     </div>
     <div id="reg-results" style="display:none">
@@ -284,6 +288,10 @@ select{padding-right:20px}
       <button class="btn btn-sm" id="regime-auto-btn">Auto 25/75 pctile</button>
       <label>ETF</label>
       <select id="regime-etf"></select>
+      <label>From</label>
+      <input type="date" id="regime-start" style="width:130px">
+      <label>To</label>
+      <input type="date" id="regime-end" style="width:130px">
       <button class="btn" id="run-regime-btn">Analyze</button>
     </div>
     <div id="regime-results" style="display:none">
@@ -2547,9 +2555,15 @@ function runRegression(){
     xLabels.push(sid+(transform!=='raw'?'_'+transform:'')+(lag>0?'_L'+lag:''));
   }
 
-  // Align: only rows where y and all x are non-null
+  // Date range filter
+  const regStart=document.getElementById('reg-start').value;
+  const regEnd=document.getElementById('reg-end').value;
+
+  // Align: only rows where y and all x are non-null, within date range
   const validIdx=[];
   for(let i=0;i<DATES.length;i++){
+    if(regStart&&DATES[i]<regStart)continue;
+    if(regEnd&&DATES[i]>regEnd)continue;
     if(yRaw[i]==null)continue;
     let ok=true;for(const col of xCols)if(col[i]==null){ok=false;break;}
     if(ok)validIdx.push(i);
@@ -2616,9 +2630,15 @@ function runRegime(){
   else{regimeNames.length=0;for(let i=0;i<=thresholds.length;i++)regimeNames.push('R'+(i+1));}
   const regimeColors=['#2dd4a0','#f59e0b','#ef5350','#a78bfa','#22d3ee'];
 
+  // Date range filter
+  const regStart=document.getElementById('regime-start').value;
+  const regEnd=document.getElementById('regime-end').value;
+
   const regimes=[];const regimeReturns={};
   for(const name of regimeNames)regimeReturns[name]=[];
   for(let i=0;i<DATES.length;i++){
+    if(regStart&&DATES[i]<regStart){regimes.push(null);continue;}
+    if(regEnd&&DATES[i]>regEnd){regimes.push(null);continue;}
     if(sv[i]==null||er[i]==null){regimes.push(null);continue;}
     let r=regimeNames[regimeNames.length-1];
     for(let j=0;j<thresholds.length;j++){if(sv[i]<thresholds[j]){r=regimeNames[j];break;}}
@@ -3058,6 +3078,17 @@ function init(){
   document.getElementById('sig-etf').addEventListener('change',renderSignalChart);
 
   // Regression
+  // Set date range defaults for Regression and Regime tabs
+  const firstDate=DATES[0],lastDate=DATES[DATES.length-1];
+  document.getElementById('reg-start').value=firstDate;
+  document.getElementById('reg-end').value=lastDate;
+  document.getElementById('reg-start').min=firstDate;document.getElementById('reg-start').max=lastDate;
+  document.getElementById('reg-end').min=firstDate;document.getElementById('reg-end').max=lastDate;
+  document.getElementById('regime-start').value=firstDate;
+  document.getElementById('regime-end').value=lastDate;
+  document.getElementById('regime-start').min=firstDate;document.getElementById('regime-start').max=lastDate;
+  document.getElementById('regime-end').min=firstDate;document.getElementById('regime-end').max=lastDate;
+
   document.getElementById('run-reg-btn').addEventListener('click',runRegression);
   // Regime
   document.getElementById('run-regime-btn').addEventListener('click',runRegime);
