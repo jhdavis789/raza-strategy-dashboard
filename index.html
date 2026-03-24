@@ -337,8 +337,13 @@ select{padding-right:20px}
       <span id="strat-key-status" style="font-size:.72rem"></span>
     </div>
     <textarea id="strat-input" rows="12" style="width:100%;font-family:'JetBrains Mono',monospace;font-size:.72rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:10px;resize:vertical;tab-size:2" placeholder="Paste RSL strategy JSON here..."></textarea>
-    <div style="display:flex;align-items:center;gap:10px;margin:8px 0">
+    <div style="display:flex;align-items:center;gap:10px;margin:8px 0;flex-wrap:wrap">
       <button class="btn" id="run-strat-btn">Run Backtest</button>
+      <label style="font-size:.72rem;color:var(--text-dim)">Start:</label>
+      <input type="date" id="strat-start" style="font-size:.72rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">
+      <div class="range-btns" id="strat-quick-range"></div>
+      <label style="font-size:.72rem;color:var(--text-dim)">End:</label>
+      <input type="date" id="strat-end" style="font-size:.72rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">
       <span id="strat-status" style="font-size:.74rem"></span>
     </div>
     <div class="status-chips" id="strat-fred-status"></div>
@@ -364,6 +369,26 @@ select{padding-right:20px}
     </div>
   </section>
 </main>
+</div>
+
+<!-- Strategy Intro Modal -->
+<div id="intro-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.7);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center">
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;max-width:560px;width:90%;padding:32px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+    <button id="intro-close" style="position:absolute;top:12px;right:16px;background:none;border:none;color:var(--text-dim);font-size:1.4rem;cursor:pointer;line-height:1">&times;</button>
+    <h2 style="font-family:'Cormorant Garamond',serif;font-size:1.5rem;color:var(--accent);margin:0 0 16px">RAZA Strategy Engine</h2>
+    <div style="font-size:.82rem;line-height:1.6;color:var(--text)">
+      <p style="margin:0 0 12px">RAZA is a rule-based strategy backtester for leveraged ETFs and macro signals. You define strategies in JSON and test them against 17 years of daily data.</p>
+      <p style="margin:0 0 12px;font-weight:600;color:var(--accent)">Workflow:</p>
+      <ol style="margin:0 0 16px;padding-left:20px">
+        <li style="margin-bottom:6px">Select a <strong>Load example</strong> from the dropdown, or paste your own strategy JSON</li>
+        <li style="margin-bottom:6px">Adjust the <strong>Start</strong> and <strong>End</strong> dates to set your fund inception period</li>
+        <li style="margin-bottom:6px">Click <strong>Run Backtest</strong> &mdash; see equity curves, drawdowns, metrics, positions, and rolling alpha/beta</li>
+        <li style="margin-bottom:6px">Use the <strong>Download RSL Spec</strong> button to get the full language reference for writing your own strategies</li>
+      </ol>
+      <p style="margin:0;color:var(--text-dim);font-size:.76rem">All signals are strictly trailing (no look-ahead). Equity starts at $1 on the start date. Transaction costs are configurable.</p>
+    </div>
+    <button id="intro-go" class="btn" style="margin-top:18px;padding:8px 24px;font-size:.82rem">Got it</button>
+  </div>
 </div>
 
 <script>
@@ -2801,6 +2826,7 @@ function showTab(id){
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
   if(id==='performance')renderPerf();if(id==='drawdowns')renderDD();if(id==='decay')renderDecay();
   if(id==='signals'){renderSignalChart();renderCorrelationHeatmap();}
+  history.replaceState(null,'','#'+id);
 }
 function initRanges(containerId,renderFn){
   const el=document.getElementById(containerId);
@@ -2947,12 +2973,26 @@ async function executeStrategy(){
     renderStratFredStatus(needed,new Set(),new Set(needed),new Set());
   }
 
-  // 3. Run backtest
+  // 3. Apply date range from UI inputs (overrides config.start/end in JSON)
+  let finalInput=input;
+  const uiStart=document.getElementById('strat-start').value;
+  const uiEnd=document.getElementById('strat-end').value;
+  if(uiStart||uiEnd){
+    try{
+      const parsed=JSON.parse(finalInput);
+      if(!parsed.config)parsed.config={};
+      if(uiStart)parsed.config.start=uiStart;
+      if(uiEnd)parsed.config.end=uiEnd;
+      finalInput=JSON.stringify(parsed);
+    }catch(e){/* let runBacktest handle parse errors */}
+  }
+
+  // 4. Run backtest
   showStratStatus('Running backtest...','load');
   try{
     // Use setTimeout to let the UI update before the potentially slow backtest
     await new Promise(r=>setTimeout(r,10));
-    lastBacktest=runBacktest(input);
+    lastBacktest=runBacktest(finalInput);
     showStratStatus(`Done: ${lastBacktest.dates.length} days, ${lastBacktest.trades.length} trades, CAGR ${(lastBacktest.metrics.cagr*100).toFixed(1)}%`,'ok');
     document.getElementById('strat-results').style.display='block';
     renderStratEquity();renderStratDD();renderStratMetrics();renderStratPositions();renderStratRolling();renderStratTrades();
@@ -2965,7 +3005,7 @@ async function executeStrategy(){
 function renderStratEquity(){
   if(!lastBacktest)return;
   const bt=lastBacktest;
-  const ds=[{label:bt.config.name||'Strategy',data:bt.dates.map((d,i)=>({x:d,y:bt.equity[i]})),borderColor:'var(--accent)',borderWidth:2.5,pointRadius:0}];
+  const ds=[{label:bt.config.name||'Strategy',data:bt.dates.map((d,i)=>({x:d,y:bt.equity[i]})),borderColor:'#ffffff',borderWidth:2.5,pointRadius:0}];
   for(const[bm,data]of Object.entries(bt.benchmarks)){
     ds.push({label:bm,data:bt.dates.map((d,i)=>({x:d,y:data.equity[i]})),borderColor:tickerColor(bm),borderWidth:1.5,pointRadius:0,borderDash:[5,3]});
   }
@@ -2978,7 +3018,7 @@ function renderStratDD(){
   const bt=lastBacktest;
   // Compute drawdown
   function dd(equity){let pk=0;return equity.map(e=>{if(e>pk)pk=e;return pk>0?e/pk-1:0;});}
-  const ds=[{label:bt.config.name||'Strategy',data:bt.dates.map((d,i)=>({x:d,y:dd(bt.equity)[i]})),borderColor:'var(--accent)',backgroundColor:hexA('#c9a84c',.1),fill:'origin',pointRadius:0,borderWidth:1.5}];
+  const ds=[{label:bt.config.name||'Strategy',data:bt.dates.map((d,i)=>({x:d,y:dd(bt.equity)[i]})),borderColor:'#ffffff',backgroundColor:'rgba(255,255,255,0.08)',fill:'origin',pointRadius:0,borderWidth:1.5}];
   for(const[bm,data]of Object.entries(bt.benchmarks)){
     ds.push({label:bm,data:bt.dates.map((d,i)=>({x:d,y:dd(data.equity)[i]})),borderColor:tickerColor(bm),pointRadius:0,borderWidth:1,borderDash:[4,3],fill:false});
   }
@@ -3004,7 +3044,7 @@ function renderStratMetrics(){
   for(const bm of Object.keys(bt.benchMetrics))html+='<th>'+bm+'</th>';
   html+='</tr>';
   for(const[label,key,isPct]of rows){
-    html+='<tr><td>'+label+'</td><td style="color:var(--accent)">'+fmt(bt.metrics[key],isPct)+'</td>';
+    html+='<tr><td>'+label+'</td><td style="color:#ffffff">'+fmt(bt.metrics[key],isPct)+'</td>';
     for(const bm of Object.keys(bt.benchMetrics)){
       const v=bt.benchMetrics[bm][key];
       html+='<td>'+fmt(v,isPct)+'</td>';
@@ -3159,11 +3199,53 @@ function init(){
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);
     a.download='RAZA_STRATEGY_SPEC.md';a.click();URL.revokeObjectURL(a.href);
   });
+  // Date range defaults for strategy tab
+  document.getElementById('strat-start').value=DATES[0];
+  document.getElementById('strat-start').min=DATES[0];
+  document.getElementById('strat-start').max=DATES[DATES.length-1];
+  document.getElementById('strat-end').value=DATES[DATES.length-1];
+  document.getElementById('strat-end').min=DATES[0];
+  document.getElementById('strat-end').max=DATES[DATES.length-1];
+
+  // Quick-range buttons for strategy start date
+  const sqr=document.getElementById('strat-quick-range');
+  const qRanges=[{label:'1Y',years:1},{label:'3Y',years:3},{label:'5Y',years:5},{label:'10Y',years:10},{label:'Max',years:0}];
+  sqr.innerHTML=qRanges.map(r=>`<button class="range-btn" data-yr="${r.years}">${r.label}</button>`).join('');
+  sqr.addEventListener('click',e=>{
+    const b=e.target.closest('.range-btn');if(!b)return;
+    const yr=parseInt(b.dataset.yr);
+    const startEl=document.getElementById('strat-start');
+    if(yr===0){startEl.value=DATES[0];}
+    else{const d=new Date();d.setFullYear(d.getFullYear()-yr);const iso=d.toISOString().slice(0,10);startEl.value=iso<DATES[0]?DATES[0]:iso;}
+    sqr.querySelectorAll('.range-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');
+  });
+
   document.getElementById('strat-examples').addEventListener('change',e=>{
-    if(e.target.value&&EXAMPLES[e.target.value])document.getElementById('strat-input').value=EXAMPLES[e.target.value];
+    if(e.target.value&&EXAMPLES[e.target.value]){
+      document.getElementById('strat-input').value=EXAMPLES[e.target.value];
+      // Auto-run when loading an example
+      executeStrategy();
+    }
   });
   document.getElementById('strat-log')?.addEventListener('change',renderStratEquity);
   initRanges('range-strat',()=>{renderStratEquity();renderStratDD();});
+
+  // URL hash routing: #strategy jumps to strategy tab
+  const hash=location.hash.replace('#','');
+  if(hash){const validTabs=['guide','universe','performance','drawdowns','decay','signals','regression','regime','pca','strategy'];if(validTabs.includes(hash))showTab(hash);}
+
+  // Intro modal: ?intro=1 shows explanation popup
+  const params=new URLSearchParams(location.search);
+  if(params.get('intro')==='1'){
+    const modal=document.getElementById('intro-modal');
+    modal.style.display='flex';
+    const close=()=>{modal.style.display='none';};
+    document.getElementById('intro-close').addEventListener('click',close);
+    document.getElementById('intro-go').addEventListener('click',close);
+    modal.addEventListener('click',e=>{if(e.target===modal)close();});
+    // Also navigate to strategy tab
+    showTab('strategy');
+  }
 }
 document.addEventListener('DOMContentLoaded',init);
 </script>
