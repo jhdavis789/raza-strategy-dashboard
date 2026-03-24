@@ -322,11 +322,18 @@ select{padding-right:20px}
         <option value="multi_layer">Multi-Layer Hedged</option>
       </select>
     </div>
+    <div class="config-row" id="strat-key-row">
+      <label>FRED API Key</label>
+      <input type="password" id="strat-fred-key" style="width:220px" placeholder="For live FRED fetch (optional)">
+      <button class="btn btn-sm" id="strat-save-key">Save &amp; Verify</button>
+      <span id="strat-key-status" style="font-size:.72rem"></span>
+    </div>
     <textarea id="strat-input" rows="12" style="width:100%;font-family:'JetBrains Mono',monospace;font-size:.72rem;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:10px;resize:vertical;tab-size:2" placeholder="Paste RSL strategy JSON here..."></textarea>
     <div style="display:flex;align-items:center;gap:10px;margin:8px 0">
       <button class="btn" id="run-strat-btn">Run Backtest</button>
       <span id="strat-status" style="font-size:.74rem"></span>
     </div>
+    <div class="status-chips" id="strat-fred-status"></div>
     <div id="strat-results" style="display:none">
       <div class="chart-controls"><div class="range-btns" id="range-strat"></div>
         <label class="toggle-label"><input type="checkbox" id="strat-log"> Log scale</label></div>
@@ -2833,11 +2840,73 @@ function showStratStatus(msg,type){
 
 let lastBacktest=null;
 
-function executeStrategy(){
+/**
+ * Parse strategy JSON and extract all FRED series IDs it references.
+ * Scans signal sources for "FRED:<ID>" patterns.
+ */
+function extractFredNeeds(jsonStr){
+  const needs=new Set();
+  try{
+    const s=JSON.parse(jsonStr);
+    const scanStr=JSON.stringify(s);
+    // Match FRED:XXXXX patterns
+    const re=/FRED:([A-Z0-9_]+)/g;
+    let m;while((m=re.exec(scanStr))!==null)needs.add(m[1]);
+  }catch(e){}
+  return[...needs];
+}
+
+function renderStratFredStatus(needed,loading,loaded,failed){
+  const el=document.getElementById('strat-fred-status');
+  let html='';
+  for(const id of needed){
+    if(failed.has(id))html+=`<span class="chip err">${id} \u2717</span>`;
+    else if(loading.has(id))html+=`<span class="chip load">${id} \u21bb</span>`;
+    else if(loaded.has(id))html+=`<span class="chip ok">${id} \u2713</span>`;
+    else html+=`<span class="chip wait">${id}</span>`;
+  }
+  el.innerHTML=html;
+}
+
+async function executeStrategy(){
   const input=document.getElementById('strat-input').value.trim();
   if(!input){showStratStatus('Paste a strategy JSON first','err');return;}
+
+  // 1. Detect needed FRED series
+  const needed=extractFredNeeds(input);
+  const missing=needed.filter(id=>!S.fredData[id]||S.fredData[id].error);
+
+  // 2. If any are missing and not embedded, fetch them
+  if(missing.length>0){
+    if(!S.fredKey){
+      showStratStatus(`Need ${missing.length} FRED series (${missing.join(', ')}). Enter API key above or load them in Signals tab.`,'err');
+      return;
+    }
+    showStratStatus(`Loading ${missing.length} FRED series: ${missing.join(', ')}...`,'load');
+    const loading=new Set(missing),loaded=new Set(needed.filter(id=>S.fredData[id]&&!S.fredData[id].error)),failed=new Set();
+    renderStratFredStatus(needed,loading,loaded,failed);
+    for(const id of missing){
+      await fetchFred(id);
+      loading.delete(id);
+      if(S.fredData[id]&&!S.fredData[id].error)loaded.add(id);
+      else failed.add(id);
+      renderStratFredStatus(needed,loading,loaded,failed);
+    }
+    refreshSignalDropdowns();
+    const stillMissing=needed.filter(id=>!S.fredData[id]||S.fredData[id].error);
+    if(stillMissing.length){
+      showStratStatus(`Failed to load: ${stillMissing.join(', ')}. Check API key.`,'err');
+      return;
+    }
+  }else if(needed.length>0){
+    renderStratFredStatus(needed,new Set(),new Set(needed),new Set());
+  }
+
+  // 3. Run backtest
   showStratStatus('Running backtest...','load');
   try{
+    // Use setTimeout to let the UI update before the potentially slow backtest
+    await new Promise(r=>setTimeout(r,10));
     lastBacktest=runBacktest(input);
     showStratStatus(`Done: ${lastBacktest.dates.length} days, ${lastBacktest.trades.length} trades, CAGR ${(lastBacktest.metrics.cagr*100).toFixed(1)}%`,'ok');
     document.getElementById('strat-results').style.display='block';
@@ -3002,7 +3071,32 @@ function init(){
   // PCA
   document.getElementById('run-pca-btn').addEventListener('click',runPCA);
 
-  // Strategy tab
+  // Strategy tab — API key (mirrors Signals tab key, shared state)
+  const stratKeyEl=document.getElementById('strat-fred-key');
+  const stratKeyStatus=document.getElementById('strat-key-status');
+  if(S.fredKey){stratKeyEl.value='\u2022'.repeat(8);stratKeyStatus.textContent='Key loaded \u2713';stratKeyStatus.style.color='var(--green)';}
+  document.getElementById('strat-save-key').addEventListener('click',async()=>{
+    const v=stratKeyEl.value.trim();
+    if(!v||v.startsWith('\u2022')){stratKeyStatus.textContent='Enter a key';stratKeyStatus.style.color='var(--red)';return;}
+    stratKeyStatus.textContent='Verifying...';stratKeyStatus.style.color='var(--accent)';
+    S.fredKey=v;
+    try{
+      const url=fredUrl(`series?series_id=DGS10&api_key=${v}&file_type=json`);
+      const r=await fetch(url);const j=await r.json();
+      if(j.error_code||!r.ok){S.fredKey='';stratKeyStatus.textContent='Invalid key';stratKeyStatus.style.color='var(--red)';return;}
+      localStorage.setItem('raza_fred_key',v);stratKeyEl.value='\u2022'.repeat(8);
+      stratKeyStatus.textContent='Verified \u2713';stratKeyStatus.style.color='var(--green)';
+      // Sync to Signals tab key field
+      document.getElementById('fred-key').value='\u2022'.repeat(8);
+      showKeyStatus('Key verified \u2713','ok');
+    }catch(e){S.fredKey='';stratKeyStatus.textContent='Network error';stratKeyStatus.style.color='var(--red)';}
+  });
+  stratKeyEl.addEventListener('keydown',e=>{if(e.key==='Enter')document.getElementById('strat-save-key').click();});
+
+  // Hide key row if all FRED data is embedded (no live fetch needed for curated series)
+  const embeddedCount=DATA.fred?Object.keys(DATA.fred).length:0;
+  if(embeddedCount>=19)document.getElementById('strat-key-row').style.display='none';
+
   document.getElementById('run-strat-btn').addEventListener('click',executeStrategy);
   document.getElementById('dl-spec-btn').addEventListener('click',()=>{
     const blob=new Blob([RSL_SPEC],{type:'text/markdown'});
