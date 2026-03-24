@@ -256,8 +256,7 @@ Use an empty array `[]` for no overlays.
   "end": null,
   "benchmarks": ["SPY", "QQQ"],
   "cost_bps": 5,
-  "rebalance": "daily",
-  "risk_free": 0
+  "rebalance": "daily"
 }
 ```
 
@@ -270,7 +269,7 @@ Use an empty array `[]` for no overlays.
 | `benchmarks` | string[] | `["SPY"]` | Tickers to compare against |
 | `cost_bps` | number | `5` | Round-trip transaction cost in basis points, applied on each position change |
 | `rebalance` | string | `"daily"` | Rebalance frequency (only "daily" supported in v1) |
-| `risk_free` | number | `0` | Annual risk-free rate for Sharpe calculation |
+| ~~risk_free~~ | — | — | **Not configurable.** Derived automatically from market data (Fed Funds Rate via FRED:DFF). Sharpe/Sortino always use actual market rates. |
 
 ---
 
@@ -522,7 +521,7 @@ Nest `rules` inside `rules` for regime-within-regime logic. There is no depth li
 4. **No fractional rebalancing** — positions snap to target weights each day (no drift)
 5. **Transaction costs are simplified** — flat bps on notional change, no market impact or slippage modeling
 6. **FRED signals must be pre-loaded** — go to the Signals tab and load any FRED series before running a strategy that uses it
-7. **Cash earns 0%** — the `_cash` position returns nothing (adjust via `risk_free` in config for Sharpe calculation)
+7. **Cash earns 0%** — the `_cash` position returns nothing. The risk-free rate for Sharpe/Sortino is derived from market data (Fed Funds Rate) automatically — never user-specified.
 8. **Daily rebalance only** — weekly/monthly coming in v2
 
 ## Extending RSL
