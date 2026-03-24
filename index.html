@@ -872,6 +872,12 @@ function tPValue(t, df) {
  *   - Sharpe ratio: Sharpe (1994), "The Sharpe Ratio"
  *   - Sortino ratio: Sortino & Price (1994)
  *   - CAPM alpha/beta: standard OLS on excess returns
+ *
+ * NO LOOK-AHEAD GUARANTEE:
+ *   - Every transform function is strictly trailing: signal[t] uses only data[0..t]
+ *   - The backtest loop observes signals at end-of-day t, sets positions, then earns
+ *     the return on day t+1. You never act on information you couldn't have known.
+ *   - Rolling z-score, percentile, SMA, EMA, vol — all use [t-window..t], never [t+1..].
  */
 
 // ═══════════════════════════════════════════════════════════════
@@ -1346,23 +1352,43 @@ function runBacktest(jsonStr) {
 
   const costBps = (config.cost_bps ?? 5) / 10000;
 
-  // Backtest loop
+  // ════════════════════════════════════════════════════════════
+  // BACKTEST LOOP — NO LOOK-AHEAD GUARANTEE
+  // ════════════════════════════════════════════════════════════
+  //
+  // Convention: signals observed at end-of-day t determine
+  // positions for day t+1. The return earned on day t+1 is
+  // close[t+1] / close[t] - 1. This means:
+  //
+  //   Day t:   observe signals (using data up to close[t])
+  //            → decide target positions for tomorrow
+  //   Day t+1: earn return based on yesterday's decision
+  //
+  // In code: we iterate t from si to ei-1. On each t we
+  // compute signals and determine positions. Those positions
+  // earn the return on day t+1 (etfReturns[t+1]).
+  //
+  // This guarantees no look-ahead: you never trade on
+  // information you couldn't have known at decision time.
+  // ════════════════════════════════════════════════════════════
+
   const resultDates = [], resultEquity = [1], resultReturns = [];
   const resultPositions = [], resultRules = [], resultTrades = [];
   let prevPos = {};
   const history = { returns: [], equity: [1] };
 
-  for (let t = si; t <= ei; t++) {
-    resultDates.push(DATES[t]);
+  for (let t = si; t < ei; t++) {
+    // Record date = t+1 (the day we earn the return)
+    resultDates.push(DATES[t + 1]);
 
-    // 1. Snapshot signal values at t and t-1
+    // 1. Observe signals at end-of-day t (all trailing, no future data)
     const sigVals = {}, sigValsPrev = {};
     for (const [name, arr] of Object.entries(built)) {
       sigVals[name] = arr[t];
       sigValsPrev[name] = t > 0 ? arr[t - 1] : null;
     }
 
-    // 2. Evaluate each layer
+    // 2. Evaluate each layer → target positions for tomorrow
     let merged = {};
     const rulePaths = [];
     for (const layer of layers) {
@@ -1371,7 +1397,6 @@ function runBacktest(jsonStr) {
       if (result) rulePaths.push(`[${layer.name}] ${result.rulePath}`);
       else rulePaths.push(`[${layer.name}] cash`);
 
-      // Aggregate: final = Σ layer.weight × layer_positions
       const w = layer.weight ?? 1.0;
       for (const [ticker, weight] of Object.entries(layerPos)) {
         merged[ticker] = (merged[ticker] || 0) + w * weight;
@@ -1381,7 +1406,7 @@ function runBacktest(jsonStr) {
     // 3. Apply overlays
     const finalPos = applyOverlays(merged, overlays, history, t);
 
-    // 4. Transaction costs
+    // 4. Transaction costs (applied when positions change)
     let cost = 0;
     const allTickers = new Set([...Object.keys(finalPos), ...Object.keys(prevPos)]);
     let posChanged = false;
@@ -1395,7 +1420,7 @@ function runBacktest(jsonStr) {
 
     if (posChanged) {
       resultTrades.push({
-        date: DATES[t],
+        date: DATES[t + 1],
         rules: rulePaths.join('; '),
         from: {...prevPos},
         to: {...finalPos},
@@ -1403,11 +1428,12 @@ function runBacktest(jsonStr) {
       });
     }
 
-    // 5. Portfolio daily return
+    // 5. Earn return on day t+1 using positions decided at t
+    //    dailyReturn = Σ(weight × (close[t+1]/close[t] - 1)) - costs
     let dailyRet = 0;
     for (const [ticker, weight] of Object.entries(finalPos)) {
       if (ticker === '_cash') continue;
-      if (etfReturns[ticker]) dailyRet += weight * etfReturns[ticker][t];
+      if (etfReturns[ticker]) dailyRet += weight * etfReturns[ticker][t + 1];
     }
     dailyRet -= cost;
 
