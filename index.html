@@ -2280,13 +2280,15 @@ function alignFred(obs){
 }
 
 /**
- * Route FRED API requests through local proxy (serve.py) to avoid CORS.
- * If served via HTTP, uses /fred/ proxy. Otherwise tries direct (will likely fail from file://).
+ * Route FRED API requests to avoid CORS.
+ * Local dev (serve.py): uses /fred/ proxy.
+ * Deployed (GitHub Pages): uses Cloudflare Worker proxy.
  */
+const FRED_PROXY='https://fred-proxy.jhdavis789.workers.dev';
 function fredUrl(path){
-  if(location.protocol==='http:'||location.protocol==='https:')
+  if(location.hostname==='localhost'||location.hostname==='127.0.0.1')
     return'/fred/'+path;
-  return'https://api.stlouisfed.org/fred/'+path;
+  return FRED_PROXY+'/fred/'+path;
 }
 
 async function fetchFred(seriesId){
