@@ -1635,6 +1635,8 @@ RSL is a JSON-based language for describing systematic trading strategies over l
 
 **Workflow:** Give this document to an LLM along with your trading ideas. The LLM generates RSL JSON. You paste it into the RAZA dashboard Strategy tab and click Run Backtest.
 
+**LLM instructions:** When a user gives you this document and asks you to help build a strategy, your job is to translate their ideas into valid RSL JSON. Ask clarifying questions to sharpen the strategy — but keep it to 1-2 focused questions at a time, not a barrage. Good questions: "What should we do when the signal is ambiguous — stay in the current position or go to cash?" or "Do you want a volatility overlay to scale down in choppy markets?" Don't ask obvious things the user has already answered. Once you have enough to start, generate the JSON and suggest they test it — they can always iterate.
+
 **Architecture:** A strategy has four sections:
 - **signals** — named data pipelines (source → transforms)
 - **layers** — independent strategy sleeves that run in parallel
@@ -1689,14 +1691,25 @@ Signal names are used in rule conditions and must be valid JS identifiers (lette
 
 **Available ETF tickers:** TQQQ, SOXL, SPXL, UPRO, TNA, UDOW, TECL, FNGU, SQQQ, SPXS, SPXU, TZA, SDOW, TECS, LABU, FAS, ERX, CURE, DPST, NAIL, DFEN, RETL, WANT, FAZ, ERY, WEBS, UCO, SCO, BOIL, KOLD, NUGT, DUST, AGQ, ZSL, UGL, GLL, TMF, TMV, TYD, TYO, QQQ, SPY, IWM, DIA, XLF, XLE, XLV, XBI, XHB, ITA, XRT, SMH, GDX, SLV.
 
-**Available FRED series** (must be loaded in Signals tab before running backtest):
+**Available FRED series** (pre-loaded in the dashboard — no API key needed):
 - Rates: DGS2, DGS5, DGS10, DGS30, DFF, SOFR
 - Spreads: T10Y2Y, T10Y3M, BAMLC0A0CM, BAMLH0A0HYM2
-- Volatility: VIXCLS
+- Volatility: VIXCLS, VXNCLS (NASDAQ-100 VIX), VXDCLS (DJIA VIX), RVXCLS (Russell 2000 VIX)
 - Macro: UNRATE, CPIAUCSL, UMCSENT, INDPRO, PAYEMS
 - Monetary: M2SL, WALCL
 - Dollar: DTWEXBGS
-- Any other valid FRED series ID can be loaded via the custom input.
+- Indexes: NASDAQCOM, NASDAQ100, NASDAQXNDX (NDX Total Return), NASDAQXCMP (Composite TR), DJIA, SP500, NASDAQNQGI (Global), NASDAQNQUS500LCT (US 500 LC TR)
+- Sectors: NASDAQNDXT (NDX Tech), NASDAQSOX (Semiconductor), NASDAQBANK, NASDAQIXF (Financial 100), NASDAQIXHC (Health Care), NASDAQCELS (Clean Energy), NASDAQNYGBIG (AI & Big Data), NASDAQNQUSS (US Small Cap), NASDAQNQMAREITT (REIT TR)
+
+**Beyond the pre-loaded series:** FRED has 800,000+ data series. The NASDAQ family alone has 9,500+ daily indexes covering every sector, geography, factor, and theme imaginable — biotechnology, cybersecurity, water, dividends, momentum, gold miners, and more. Any valid FRED series ID works as a signal source via \`FRED:<SERIES_ID>\`. The dashboard will auto-fetch it when you run the backtest (requires a free FRED API key).
+
+**LLM guidance for discovering FRED series:** When building a strategy, think about what economic or market conditions should drive the decision. Then search FRED for relevant series. Examples:
+- User says "I want to be defensive when credit is deteriorating" → use \`FRED:BAMLH0A0HYM2\` (HY spreads) or search FRED for sector-specific credit indexes
+- User says "go risk-on when semiconductors are leading" → use \`FRED:NASDAQSOX\` (PHLX Semi index) or the embedded SOXL ETF data
+- User says "I want to trade around NASDAQ biotech trends" → search FRED for \`NASDAQBIOTECHNOLOGY\` or similar NASDAQ sector indexes
+- User says "use a clean energy signal" → \`FRED:NASDAQCELS\` is pre-loaded, or search for other NASDAQ green/renewable series
+
+To find series IDs, search the FRED website (fred.stlouisfed.org) or use the FRED API search endpoint. All daily-frequency FRED series work. Monthly/quarterly series are forward-filled to trading dates automatically.
 
 ### Transform Functions
 
@@ -2147,7 +2160,7 @@ Nest \`rules\` inside \`rules\` for regime-within-regime logic. There is no dept
 3. **Forward-fill only** — FRED signals are forward-filled to trading dates; gaps appear as stale values
 4. **No fractional rebalancing** — positions snap to target weights each day (no drift)
 5. **Transaction costs are simplified** — flat bps on notional change, no market impact or slippage modeling
-6. **FRED signals must be pre-loaded** — go to the Signals tab and load any FRED series before running a strategy that uses it
+6. **FRED auto-loading** — the dashboard will automatically fetch any FRED series referenced in your strategy when you click Run Backtest (requires a free API key for non-embedded series). 39 common series are pre-embedded and need no key.
 7. **Cash earns 0%** — the \`_cash\` position returns nothing. The risk-free rate for Sharpe/Sortino is derived from market data (Fed Funds Rate) automatically — never user-specified.
 8. **Daily rebalance only** — weekly/monthly coming in v2
 
@@ -2160,6 +2173,35 @@ The engine is designed for extensibility:
 - **New condition operators:** Add a case in \`evalCondition()\`
 
 Each extension point is a single function with a switch/case pattern.
+
+---
+
+## LLM Strategy Development Guide
+
+When helping a user build a strategy, follow this approach:
+
+**1. Start with their idea, not with questions.** If the user gives you enough to write an initial strategy, write it. A testable first draft is more valuable than a perfect plan. They can iterate after seeing results.
+
+**2. Ask 1-2 sharpening questions when needed.** Good times to ask:
+- "What asset should this go to when conditions are bad — cash, bonds, or inverse?" (risk-off behavior)
+- "Should we scale position sizes with conviction, or go all-in/all-out?" (binary vs. graduated)
+- "Any sectors or themes you want to tilt toward?" (helps pick FRED signals)
+
+Don't ask more than two questions before generating something testable. Avoid asking things the user has already implied.
+
+**3. Suggest signals they haven't considered.** When a user describes a macro view, think about what data could express it:
+- Yield curve shape → T10Y2Y, T10Y3M
+- Credit stress → BAMLH0A0HYM2 (HY OAS), BAMLC0A0CM (IG OAS)
+- Sector momentum → NASDAQSOX, NASDAQNDXT, NASDAQBANK, NASDAQIXHC, etc.
+- Risk appetite → VIXCLS, VXNCLS, compare to historical z-scores
+- The NASDAQ index family on FRED has 9,500+ daily indexes — if the user cares about a specific theme (AI, clean energy, biotech, REITs, dividends, water, transportation), there's likely a NASDAQ index for it. Search FRED for \`NASDAQ\` + the theme keyword.
+
+**4. After generating the JSON, suggest next steps.** Brief, not exhaustive:
+- "Try adjusting the start date to see how it performs in different regimes"
+- "You could add a vol_target overlay to smooth the ride"
+- "Consider splitting into layers if you want to hedge rates separately"
+
+**5. Iterate based on results.** When the user reports backtest results, help them interpret and refine. If Sharpe is low, ask about the drawdown profile. If turnover is high, suggest wider thresholds. Keep suggestions actionable and concrete.
 `;
 
 // ══════════════════════════════════════════════════════════════
